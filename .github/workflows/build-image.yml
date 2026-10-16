@@ -1,0 +1,62 @@
+name: Build Hermes image
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/build-image.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          df -h
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af || true
+          df -h
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (linux/amd64)
+        run: |
+          docker build \
+            --platform linux/amd64 \
+            --tag hermes-agent:latest \
+            --build-arg TARGETARCH=amd64 \
+            .
+
+      - name: Verify image
+        run: |
+          docker images hermes-agent
+          docker inspect hermes-agent:latest --format '{{.Architecture}}/{{.Os}}'
+
+      - name: Save + compress image
+        run: |
+          docker save hermes-agent:latest -o hermes-agent-image.tar
+          gzip -1 hermes-agent-image.tar
+          ls -lh hermes-agent-image.tar.gz
+          sha256sum hermes-agent-image.tar.gz | tee sha256.txt
+
+      - name: Split for reliable download
+        run: |
+          split -b 1500M -d hermes-agent-image.tar.gz hermes-agent-image.tar.gz.part-
+          ls -lh hermes-agent-image.tar.gz.part-*
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermes-agent-image
+          path: |
+            hermes-agent-image.tar.gz.part-*
+            sha256.txt
+          retention-days: 14
+          compression-level: 0
